@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tibia Hunt Data Analytics Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500 selection:text-slate-950">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect } = React;
+
+    // Classificação estrita dos 4 Tiers por regras numéricas do analista
+    function getQuadrantInfo(rawXpH, balanceH) {
+      if (rawXpH >= 6_000_000 && balanceH >= 800_000) {
+        return {
+          key: 'TIER_S',
+          title: 'TIER S - Caçada Perfeita',
+          tierLabel: 'TIER S',
+          criteria: 'Raw XP ≥ 6M/h & Profit ≥ 800k/h',
+          bgColor: 'bg-yellow-950/60',
+          borderColor: 'border-yellow-500',
+          textColor: 'text-yellow-400',
+          badgeColor: 'bg-yellow-500 text-slate-950 font-black',
+          dotClass: 'bg-yellow-400 ring-yellow-500/50',
+          hexColor: '#eab308',
+          colorName: 'Dourado',
+          icon: '🥇'
+        };
+      }
+
+      if (rawXpH >= 7_000_000) {
+        return {
+          key: 'TIER_A_POWER',
+          title: 'TIER A - Powerlevel',
+          tierLabel: 'TIER A (Power)',
+          criteria: 'Raw XP ≥ 7M/h',
+          bgColor: 'bg-emerald-950/60',
+          borderColor: 'border-emerald-500',
+          textColor: 'text-emerald-400',
+          badgeColor: 'bg-emerald-500 text-slate-950 font-black',
+          dotClass: 'bg-emerald-500 ring-emerald-500/50',
+          hexColor: '#22c55e',
+          colorName: 'Verde',
+          icon: '⚡'
+        };
+      }
+
+      if (rawXpH >= 4_500_000 && balanceH >= 800_000) {
+        return {
+          key: 'TIER_A_PROFIT',
+          title: 'TIER A - Profit',
+          tierLabel: 'TIER A (Profit)',
+          criteria: 'Raw XP ≥ 4.5M/h & Profit ≥ 800k/h',
+          bgColor: 'bg-orange-950/60',
+          borderColor: 'border-orange-500',
+          textColor: 'text-orange-400',
+          badgeColor: 'bg-orange-500 text-slate-950 font-black',
+          dotClass: 'bg-orange-500 ring-orange-500/50',
+          hexColor: '#f97316',
+          colorName: 'Laranja',
+          icon: '💰'
+        };
+      }
+
+      return {
+        key: 'TIER_C',
+        title: 'TIER C - Baixo Desempenho',
+        tierLabel: 'TIER C',
+        criteria: 'Abaixo dos limiares de Tier S e Tier A',
+        bgColor: 'bg-red-950/60',
+        borderColor: 'border-red-500',
+        textColor: 'text-red-400',
+        badgeColor: 'bg-red-500 text-slate-950 font-black',
+        dotClass: 'bg-red-500 ring-red-500/50',
+        hexColor: '#ef4444',
+        colorName: 'Vermelho',
+        icon: '⚠️'
+      };
+    }
+
+    function parseHuntLog(text) {
+      if (!text || typeof text !== 'string') return null;
+
+      const getMatch = (regex) => {
+        const m = text.match(regex);
+        return m ? m[1].trim() : null;
+      };
+
+      const parseNum = (str) => {
+        if (!str) return 0;
+        const cleaned = str.replace(/[^0-9-]/g, '');
+        return parseInt(cleaned, 10) || 0;
+      };
+
+      const sessionLineMatch = text.match(/Session data:\s*([^\r\n]+)/i);
+      const sessionLine = sessionLineMatch ? sessionLineMatch[1].trim() : '';
+
+      let dateStr = '2026-08-06';
+      const dateMatch = sessionLine.match(/(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        dateStr = dateMatch[1];
+      }
+
+      let customHuntName = null;
+      const customNameMatch = sessionLine.match(/to\s+[\d\-\s,:]+?\s*-\s*(.+)$/i) || sessionLine.match(/\d{2}:\d{2}:\d{2}\s*-\s*(.+)$/i);
+      if (customNameMatch && customNameMatch[1].trim()) {
+        customHuntName = customNameMatch[1].trim();
+      }
+
+      const durationStr = getMatch(/Session:\s*([^\r\n]+)/i) || '01:00h';
+      let hours = 1.0;
+      const timeMatch = durationStr.match(/(\d+):(\d+)(?::(\d+))?h?/);
+      if (timeMatch) {
+        const h = parseInt(timeMatch[1], 10) || 0;
+        const m = parseInt(timeMatch[2], 10) || 0;
+        const s = parseInt(timeMatch[3] || '0', 10) || 0;
+        hours = h + (m / 60) + (s / 3600);
+        if (hours <= 0) hours = 1;
+      }
+
+      const rawXpGainParsed = parseNum(getMatch(/Raw XP Gain:\s*([^\r\n]+)/i));
+      const xpGain = parseNum(getMatch(/XP Gain:\s*([^\r\n]+)/i));
+      const effectiveRawXpGain = rawXpGainParsed > 0 ? rawXpGainParsed : xpGain;
+
+      const realRawXpH = Math.round(effectiveRawXpGain / hours);
+      const realXpH = Math.round(xpGain / hours);
+
+      const loot = parseNum(getMatch(/Loot:\s*([^\r\n]+)/i));
+      const supplies = parseNum(getMatch(/Supplies:\s*([^\r\n]+)/i));
+
+      const balanceRaw = getMatch(/Balance:\s*([^\r\n]+)/i);
+      let balance = parseNum(balanceRaw);
+      if (balanceRaw && balanceRaw.includes('-') && balance > 0) balance = -balance;
+      if (!balanceRaw) balance = loot - supplies;
+
+      const realBalanceH = Math.round(balance / hours);
+      const damage = parseNum(getMatch(/Damage:\s*([^\r\n]+)/i));
+      const realDamageH = Math.round(damage / hours);
+      const healing = parseNum(getMatch(/Healing:\s*([^\r\n]+)/i));
+      const realHealingH = Math.round(healing / hours);
+
+      const monsters = [];
+      const killedSectionMatch = text.match(/Killed [Mm]onsters:([\s\S]*?)(?:Looted [Ii]tems:|Looted [Ii]tems|Looted|$)/i);
+      if (killedSectionMatch) {
+        const lines = killedSectionMatch[1].split('\n');
+        for (let line of lines) {
+          line = line.trim();
+          if (!line) continue;
+          if (/looted/i.test(line)) break;
+
+          const mMatch = line.match(/^(\d+)x?\s+(.+)$/i);
+          if (mMatch) {
+            monsters.push({
+              count: parseInt(mMatch[1], 10),
+              name: mMatch[2].trim().toLowerCase()
+            });
+          }
+        }
+      }
+
+      const items = [];
+      const lootedSectionMatch = text.match(/Looted [Ii]tems:([\s\S]*?)$/i);
+      if (lootedSectionMatch) {
+        const lines = lootedSectionMatch[1].split('\n');
+        for (let line of lines) {
+          line = line.trim();
+          if (!line) continue;
+          const iMatch = line.match(/^(\d+)x?\s+(.+)$/i);
+          if (iMatch) {
+            items.push({
+              count: parseInt(iMatch[1], 10),
+              name: iMatch[2].trim()
+            });
+          }
+        }
+      }
+
+      let topMonster = 'monstro';
+      if (monsters.length > 0) {
+        const sorted = [...monsters].sort((a, b) => b.count - a.count);
+        topMonster = sorted[0].name;
+      }
+
+      let mmdd = '08-06';
+      if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts.length >= 3) mmdd = `${parts[1]}-${parts[2]}`;
+        else mmdd = dateStr;
+      }
+
+      const generatedName = customHuntName ? customHuntName : `${topMonster} (${mmdd})`;
+
+      return {
+        id: 'hunt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+        name: generatedName,
+        customHuntName,
+        rawDateStr: sessionLine || 'Session Data',
+        date: dateStr,
+        durationStr,
+        durationHours: parseFloat(hours.toFixed(2)),
+        rawXpGain: effectiveRawXpGain,
+        xpGain,
+        rawXpH: realRawXpH,
+        xpH: realXpH,
+        loot,
+        supplies,
+        balance,
+        balanceH: realBalanceH,
+        damage,
+        damageH: realDamageH,
+        healing,
+        healingH: realHealingH,
+        monsters,
+        items,
+        topMonster,
+        totalKills: monsters.reduce((acc, m) => acc + m.count, 0)
+      };
+    }
+
+    function parseMultipleHuntLogs(fullText) {
+      if (!fullText || typeof fullText !== 'string') return [];
+      const rawBlocks = fullText.split(/(?=Session data:\s*From)/i).filter(b => b.trim().length > 0);
+      const results = [];
+      for (let i = 0; i < rawBlocks.length; i++) {
+        const parsed = parseHuntLog(rawBlocks[i]);
+        if (parsed && (parsed.monsters.length > 0 || parsed.xpGain > 0 || parsed.rawXpGain > 0 || parsed.damage > 0)) {
+          results.push(parsed);
+        }
+      }
+      return results;
+    }
+
+    const formatNumber = (num) => new Intl.NumberFormat('pt-BR').format(num || 0);
+    const formatCompact = (num) => {
+      if (Math.abs(num) >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
+      if (Math.abs(num) >= 1_000) return (num / 1_000).toFixed(1) + 'k';
+      return num.toString();
+    };
+
+    function EmptyState({ onGoToImport }) {
+      return (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center space-y-4 shadow-xl my-4">
+          <div className="w-16 h-16 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-center text-3xl mx-auto text-cyan-400 shadow-inner">
+            📥
+          </div>
+          <h3 className="text-base font-bold text-slate-200">Nenhum Histórico ou Caçada Importada</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            Faça upload do seu arquivo <b>.txt</b> contendo seus logs do Hunt Analyzer.
+          </p>
+          <div>
+            <button
+              onClick={onGoToImport}
+              className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold rounded-xl text-xs transition shadow-lg shadow-cyan-500/25"
+            >
+              📁 Ir para Importar Arquivo .txt
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [huntsHistory, setHuntsHistory] = useState(() => {
+        try {
+          const saved = localStorage.getItem('tibia_hunts_local');
+          return saved ? JSON.parse(saved) : [];
+        } catch(e) {
+          return [];
+        }
+      });
+      const [activeTab, setActiveTab] = useState('analyzer');
+      const [filterQuery, setFilterQuery] = useState('');
+      const [notification, setNotification] = useState('');
+
+      const [parsedImportBatch, setParsedImportBatch] = useState([]);
+      const [importFileName, setImportFileName] = useState('');
+      const [isDragging, setIsDragging] = useState(false);
+      const [showRawTextContent, setShowRawTextContent] = useState(false);
+      const [rawTextValue, setRawTextValue] = useState('');
+
+      const showToast = (msg) => {
+        setNotification(msg);
+        setTimeout(() => setNotification(''), 4000);
+      };
+
+      useEffect(() => {
+        try {
+          localStorage.setItem('tibia_hunts_local', JSON.stringify(huntsHistory));
+        } catch(e) {}
+      }, [huntsHistory]);
+
+      const handleFileUpload = (file) => {
+        if (!file) return;
+        setImportFileName(file.name);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const content = e.target.result;
+          setRawTextValue(content);
+          const parsedBatch = parseMultipleHuntLogs(content);
+          setParsedImportBatch(parsedBatch);
+          if (parsedBatch.length > 0) {
+            showToast(`📁 Arquivo "${file.name}" lido! ${parsedBatch.length} caçada(s) detectada(s).`);
+          } else {
+            showToast('⚠️ Nenhuma caçada válida encontrada.');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const handleFileInputChange = (e) => {
+        if (e.target.files && e.target.files[0]) {
+          handleFileUpload(e.target.files[0]);
+        }
+      };
+
+      const handleSaveImportedBatch = () => {
+        if (parsedImportBatch.length === 0) return;
+        setHuntsHistory((prev) => [...parsedImportBatch, ...prev]);
+        showToast(`✅ ${parsedImportBatch.length} caçada(s) importada(s) com sucesso!`);
+        setParsedImportBatch([]);
+        setImportFileName('');
+        setRawTextValue('');
+        setActiveTab('dashboard');
+      };
+
+      const handleDeleteHunt = (id) => {
+        setHuntsHistory((prev) => prev.filter((h) => h.id !== id));
+        showToast('🗑️ Caçada removida.');
+      };
+
+      const handleClearAllHistory = () => {
+        if (huntsHistory.length === 0) return;
+        setHuntsHistory([]);
+        showToast('🧹 Histórico limpo!');
+      };
+
+      const handleExportCSV = () => {
+        if (huntsHistory.length === 0) return;
+        const headers = ["ID", "Nome da Hunt", "Data", "Duracao (Horas)", "Raw XP Gain", "XP Gain", "Raw XP/h", "Balance", "Dano Total", "Monstro Principal"];
+        const rows = huntsHistory.map((h) => [
+          h.id, `"${h.name.replace(/"/g, '""')}"`, h.date, h.durationHours, h.rawXpGain, h.xpGain, h.rawXpH, h.balance, h.damage, `"${h.topMonster}"`
+        ]);
+        const csvContent = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
+        const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `tibia_hunts_export.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast("📊 CSV exportado!");
+      };
+
+      const metrics = useMemo(() => {
+        if (huntsHistory.length === 0) return null;
+        const totalHours = huntsHistory.reduce((sum, h) => sum + h.durationHours, 0);
+        const totalRawXP = huntsHistory.reduce((sum, h) => sum + h.rawXpGain, 0);
+        const totalXP = huntsHistory.reduce((sum, h) => sum + h.xpGain, 0);
+        const totalLoot = huntsHistory.reduce((sum, h) => sum + h.loot, 0);
+        const totalSupplies = huntsHistory.reduce((sum, h) => sum + h.supplies, 0);
+        const totalBalance = huntsHistory.reduce((sum, h) => sum + h.balance, 0);
+        const totalKills = huntsHistory.reduce((sum, h) => sum + h.totalKills, 0);
+        const totalDamage = huntsHistory.reduce((sum, h) => sum + h.damage, 0);
+        const totalHealing = huntsHistory.reduce((sum, h) => sum + h.healing, 0);
+
+        const avgRawXpH = totalHours > 0 ? Math.round(totalRawXP / totalHours) : 0;
+        const avgBalanceH = totalHours > 0 ? Math.round(totalBalance / totalHours) : 0;
+        const avgDamageH = totalHours > 0 ? Math.round(totalDamage / totalHours) : 0;
+        const killsPerHour = totalHours > 0 ? Math.round(totalKills / totalHours) : 0;
+        const roiPercentage = totalSupplies > 0 ? Math.round((totalLoot / totalSupplies) * 100) : 0;
+
+        const maxRawXpH = Math.max(...huntsHistory.map((h) => h.rawXpH)) || 1;
+        const maxBalanceH = Math.max(...huntsHistory.map((h) => h.balanceH)) || 1;
+
+        const rankedEfficiencyHunts = huntsHistory.map((h) => {
+          const xpScore = h.rawXpH / maxRawXpH;
+          const balanceScore = maxBalanceH > 0 ? Math.max(0, h.balanceH) / maxBalanceH : 0;
+          const compositeScore = Math.round(((xpScore * 0.5) + (balanceScore * 0.5)) * 100);
+          const xpPerProfitGpH = h.balance > 0 ? (h.rawXpGain / h.balance).toFixed(1) : '0';
+          const quadInfo = getQuadrantInfo(h.rawXpH, h.balanceH);
+          return { ...h, compositeScore, xpPerProfitGpH, quadInfo };
+        }).sort((a, b) => b.compositeScore - a.compositeScore);
+
+        const monsterAgg = {};
+        huntsHistory.forEach((h) => {
+          h.monsters.forEach((m) => {
+            const key = m.name.toLowerCase().trim();
+            monsterAgg[key] = (monsterAgg[key] || 0) + m.count;
+          });
+        });
+        const top5Monsters = Object.entries(monsterAgg).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+        return {
+          totalHunts: huntsHistory.length,
+          totalHours: parseFloat(totalHours.toFixed(2)),
+          totalRawXP,
+          avgRawXpH,
+          totalBalance,
+          avgBalanceH,
+          totalKills,
+          killsPerHour,
+          roiPercentage,
+          totalDamage,
+          avgDamageH,
+          totalHealing,
+          damageHealingRatio: totalHealing > 0 ? (totalDamage / totalHealing).toFixed(2) : '0',
+          rankedEfficiencyHunts,
+          top5Monsters
+        };
+      }, [huntsHistory]);
+
+      const matrixMaxValues = useMemo(() => {
+        if (huntsHistory.length === 0) return { maxX: 10_000_000, maxY: 2_500_000 };
+        const maxRaw = Math.max(...huntsHistory.map((h) => h.rawXpH || 0));
+        const maxBal = Math.max(...huntsHistory.map((h) => h.balanceH || 0));
+        return {
+          maxX: Math.max(10_000_000, maxRaw * 1.1),
+          maxY: Math.max(2_500_000, maxBal * 1.1)
+        };
+      }, [huntsHistory]);
+
+      const filteredHistory = useMemo(() => {
+        return huntsHistory.filter((h) => {
+          const q = filterQuery.toLowerCase();
+          return h.name.toLowerCase().includes(q) || h.topMonster.toLowerCase().includes(q) || h.date.includes(q);
+        });
+      }, [huntsHistory, filterQuery]);
+
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-8">
+          {notification && (
+            <div className="fixed top-4 right-4 z-50 bg-emerald-500 text-slate-950 font-bold px-4 py-2.5 rounded-xl shadow-2xl animate-bounce flex items-center gap-2 border border-emerald-300 text-xs">
+              <span>{notification}</span>
+            </div>
+          )}
+
+          <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 py-2.5 px-4">
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-slate-950 font-black text-lg shadow-md">
+                  ⚔️
+                </div>
+                <div>
+                  <h1 className="text-sm font-bold tracking-wide text-cyan-400 flex items-center gap-2">
+                    Tibia Hunt Data Analytics Studio
+                    <span className="bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] px-2 py-0.5 rounded-full font-semibold">
+                      Gamer Analytics 10Y
+                    </span>
+                  </h1>
+                  <p className="text-[11px] text-slate-400">Análise de Performance de Caça por Raw XP/h Real, Balance e Dano</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {huntsHistory.length > 0 && (
+                  <button
+                    onClick={handleClearAllHistory}
+                    className="bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 text-xs px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1"
+                  >
+                    <span>🧹</span> Limpar Histórico ({huntsHistory.length})
+                  </button>
+                )}
+                <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-800 text-[11px] px-2.5 py-1 rounded-lg font-bold">
+                  🟢 Sistema Online
+                </span>
+              </div>
+            </div>
+          </header>
+
+          <div className="max-w-7xl mx-auto px-4 mt-4">
+            <div className="flex items-center gap-1.5 border-b border-slate-800 overflow-x-auto pb-1">
+              <button onClick={() => setActiveTab('analyzer')} className={`px-3.5 py-2 rounded-t-xl font-semibold text-xs flex items-center gap-1.5 transition-all border-b-2 whitespace-nowrap ${activeTab === 'analyzer' ? 'border-cyan-400 text-cyan-400 bg-slate-900/80' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                📁 Importar Hunt Analyzer (.txt)
+              </button>
+              <button onClick={() => setActiveTab('dashboard')} className={`px-3.5 py-2 rounded-t-xl font-semibold text-xs flex items-center gap-1.5 transition-all border-b-2 whitespace-nowrap ${activeTab === 'dashboard' ? 'border-cyan-400 text-cyan-400 bg-slate-900/80' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                📊 Visão Gerencial & Proporção XP/Balance
+              </button>
+              <button onClick={() => setActiveTab('matrix')} className={`px-3.5 py-2 rounded-t-xl font-semibold text-xs flex items-center gap-1.5 transition-all border-b-2 whitespace-nowrap ${activeTab === 'matrix' ? 'border-cyan-400 text-cyan-400 bg-slate-900/80' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                🎯 Matriz XP Real vs Balance (4 Tiers)
+              </button>
+              <button onClick={() => setActiveTab('damage')} className={`px-3.5 py-2 rounded-t-xl font-semibold text-xs flex items-center gap-1.5 transition-all border-b-2 whitespace-nowrap ${activeTab === 'damage' ? 'border-cyan-400 text-cyan-400 bg-slate-900/80' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                💥 Análise de Dano (Damage/h)
+              </button>
+              <button onClick={() => setActiveTab('history')} className={`px-3.5 py-2 rounded-t-xl font-semibold text-xs flex items-center gap-1.5 transition-all border-b-2 whitespace-nowrap ${activeTab === 'history' ? 'border-cyan-400 text-cyan-400 bg-slate-900/80' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                📜 Histórico ({huntsHistory.length})
+              </button>
+            </div>
+          </div>
+
+          <main className="max-w-7xl mx-auto px-4 mt-4">
+            {activeTab === 'analyzer' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                  <h2 className="text-sm font-bold text-slate-100">📁 Importar Arquivo .txt com Hunt Analyzers</h2>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Faça upload do seu arquivo de texto contendo os logs do Hunt Analyzer. O sistema lê múltiplos blocos separados por <code className="text-cyan-400 bg-slate-950 px-1 py-0.5 rounded">Session data: From</code>.
+                  </p>
+                  
+                  <div className="border-2 border-dashed border-slate-800 bg-slate-950 rounded-2xl p-6 text-center cursor-pointer hover:border-slate-700">
+                    <input type="file" accept=".txt" onChange={handleFileInputChange} className="hidden" id="txtFileInput" />
+                    <label htmlFor="txtFileInput" className="cursor-pointer space-y-2 block">
+                      <div className="text-3xl">📄</div>
+                      <div className="text-xs font-bold text-slate-200">
+                        {importFileName ? <span className="text-cyan-400">{importFileName}</span> : 'Clique para escolher o arquivo .txt'}
+                      </div>
+                    </label>
+                  </div>
+
+                  {parsedImportBatch.length > 0 && (
+                    <div className="pt-3 border-t border-slate-800 flex justify-between items-center">
+                      <div className="text-xs text-slate-400">Detectadas: <b className="text-cyan-300">{parsedImportBatch.length}</b> sessões</div>
+                      <button onClick={handleSaveImportedBatch} className="py-2 px-4 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition">
+                        💾 Salvar {parsedImportBatch.length} Caçadas
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl">
+                  <h3 className="text-xs font-bold text-slate-200 border-b border-slate-800 pb-2 mb-3">⚡ Preview das Caçadas</h3>
+                  {parsedImportBatch.length > 0 ? (
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {parsedImportBatch.map((h, i) => (
+                        <div key={i} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-xs space-y-1">
+                          <div className="font-bold text-cyan-300">#{i+1} {h.name}</div>
+                          <div className="text-slate-400 text-[11px]">Raw XP/h: <b className="text-blue-400">{formatCompact(h.rawXpH)}</b> | Balance: <b className={h.balance >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCompact(h.balance)}</b></div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-slate-500 text-xs">Nenhum arquivo carregado no momento.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'dashboard' && (
+              !metrics || huntsHistory.length === 0 ? <EmptyState onGoToImport={() => setActiveTab('analyzer')} /> : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                      <span className="text-[11px] text-slate-400 uppercase font-bold block">Raw XP Total</span>
+                      <div className="text-xl font-black text-cyan-400 mt-1">{formatNumber(metrics.totalRawXP)}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Média Raw XP/h: <b>{formatNumber(metrics.avgRawXpH)}/h</b></div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                      <span className="text-[11px] text-slate-400 uppercase font-bold block">Lucro Total (Balance)</span>
+                      <div className={`text-xl font-black mt-1 ${metrics.totalBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(metrics.totalBalance)} gps</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Média Balance/h: <b>{formatNumber(metrics.avgBalanceH)}/h</b></div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                      <span className="text-[11px] text-slate-400 uppercase font-bold block">Tempo & Abates</span>
+                      <div className="text-xl font-black text-amber-400 mt-1">{metrics.totalHours}h de caça</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Monstros/Hora: <b>{formatNumber(metrics.killsPerHour)}/h</b></div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                      <span className="text-[11px] text-slate-400 uppercase font-bold block">Dano Total</span>
+                      <div className="text-xl font-black text-purple-400 mt-1">{formatCompact(metrics.totalDamage)}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">ROI: <b>{metrics.roiPercentage}%</b></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+                    <h3 className="text-sm font-bold text-slate-100">🏆 Ranking de Eficiência de Caçada (XP Gain x Balance)</h3>
+                    <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-72">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="sticky top-0 bg-slate-950 text-slate-400 font-bold uppercase">
+                          <tr className="border-b border-slate-800">
+                            <th className="p-2.5">Pos</th>
+                            <th className="p-2.5">Hunt</th>
+                            <th className="p-2.5">Tier</th>
+                            <th className="p-2.5">Raw XP/h</th>
+                            <th className="p-2.5">Balance/h</th>
+                            <th className="p-2.5 text-right">Score</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-850 text-slate-300">
+                          {metrics.rankedEfficiencyHunts.map((h, i) => (
+                            <tr key={h.id} className="hover:bg-slate-850/50">
+                              <td className="p-2.5 font-bold font-mono">#{i+1}</td>
+                              <td className="p-2.5 font-bold text-cyan-300">{h.name}</td>
+                              <td className="p-2.5"><span className={`px-2 py-0.5 rounded font-bold text-[10px] ${h.quadInfo.badgeColor}`}>{h.quadInfo.tierLabel}</span></td>
+                              <td className="p-2.5 font-bold text-blue-400">{formatNumber(h.rawXpH)}</td>
+                              <td className={`p-2.5 font-bold ${h.balanceH >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{formatNumber(h.balanceH)}/h</td>
+                              <td className="p-2.5 text-right"><span className="bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded-full font-bold">{h.compositeScore}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )
+            )}
+
+            {activeTab === 'matrix' && (
+              !metrics || huntsHistory.length === 0 ? <EmptyState onGoToImport={() => setActiveTab('analyzer')} /> : (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-100">🎯 Matriz XP Real vs Balance (4 Tiers)</h2>
+                    <p className="text-[11px] text-slate-400">Classificação cartesiana exata por regras de desempenho.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-slate-950 border border-yellow-500/70 p-3 rounded-xl text-xs"><b className="text-yellow-400">🥇 TIER S:</b> XP ≥ 6M & Profit ≥ 800k</div>
+                    <div className="bg-slate-950 border border-emerald-500/70 p-3 rounded-xl text-xs"><b className="text-emerald-400">⚡ TIER A (Power):</b> XP ≥ 7M</div>
+                    <div className="bg-slate-950 border border-orange-500/70 p-3 rounded-xl text-xs"><b className="text-orange-400">💰 TIER A (Profit):</b> XP ≥ 4.5M & Profit ≥ 800k</div>
+                    <div className="bg-slate-950 border border-red-500/70 p-3 rounded-xl text-xs"><b className="text-red-400">⚠️ TIER C:</b> Baixo desempenho / Abaixo do corte</div>
+                  </div>
+
+                  {(() => {
+                    const { maxX, maxY } = matrixMaxValues;
+                    const y800kPct = Math.min(90, Math.max(10, (800_000 / maxY) * 100));
+                    const x45mPct = Math.min(90, Math.max(10, (4_500_000 / maxX) * 100));
+                    const x60mPct = Math.min(90, Math.max(10, (6_000_000 / maxX) * 100));
+                    const x70mPct = Math.min(90, Math.max(10, (7_000_000 / maxX) * 100));
+
+                    return (
+                      <div className="relative w-full h-80 bg-slate-950 border border-slate-800 rounded-2xl p-4 overflow-hidden shadow-inner">
+                        <div className="absolute left-0 right-0 border-b-2 border-dashed border-amber-500/40 z-0 flex justify-end pr-2 pointer-events-none" style={{ bottom: `${y800kPct}%` }}>
+                          <span className="bg-slate-900 text-amber-300 text-[9px] px-1 rounded">800k Profit/h</span>
+                        </div>
+                        <div className="absolute top-0 bottom-0 border-r border-dashed border-red-500/40 z-0 pointer-events-none" style={{ left: `${x45mPct}%` }}>
+                          <span className="bg-slate-900 text-red-300 text-[9px] px-1 rounded absolute top-2">4.5M XP</span>
+                        </div>
+
+                        <div className="absolute inset-0 pointer-events-none z-0">
+                          <div className="absolute left-2 bottom-2 text-[10px] text-red-400 font-bold bg-slate-950/80 p-1 rounded">🔴 TIER C (Baixa XP / Baixo Profit)</div>
+                          <div className="absolute top-2 right-4 text-[10px] text-yellow-400 font-bold bg-slate-950/80 p-1 rounded">🟡 TIER S</div>
+                        </div>
+
+                        <div className="relative w-full h-full z-10">
+                          {huntsHistory.map((h) => {
+                            const leftPct = Math.min(92, Math.max(8, (h.rawXpH / maxX) * 100));
+                            const bottomPct = Math.min(92, Math.max(8, (h.balanceH / maxY) * 100));
+                            const qInfo = getQuadrantInfo(h.rawXpH, h.balanceH);
+                            return (
+                              <div key={h.id} className="absolute transform -translate-x-1/2 translate-y-1/2 group cursor-pointer" style={{ left: `${leftPct}%`, bottom: `${bottomPct}%` }}>
+                                <div className="w-6 h-6 rounded-full border-2 border-slate-950 shadow-lg flex items-center justify-center text-xs font-black" style={{ backgroundColor: qInfo.hexColor, color: '#020617' }}>
+                                  {qInfo.icon}
+                                </div>
+                                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block bg-slate-900 border border-cyan-500 p-2 rounded text-[11px] z-30 shadow-xl whitespace-nowrap">
+                                  <div className="font-bold text-cyan-300">{h.name}</div>
+                                  <div style={{ color: qInfo.hexColor }}>{qInfo.title}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )
+            )}
+
+            {activeTab === 'damage' && (
+              !metrics || huntsHistory.length === 0 ? <EmptyState onGoToImport={() => setActiveTab('analyzer')} /> : (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                  <h2 className="text-sm font-bold text-slate-100">💥 Análise de Dano (Damage/h & Abates)</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
+                      <span className="text-[11px] text-slate-400">Média Dano/h do Jogador</span>
+                      <div className="text-xl font-black text-cyan-400 mt-1">{formatCompact(metrics.avgDamageH)}/h</div>
+                    </div>
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
+                      <span className="text-[11px] text-slate-400">Dano Total Aplicado</span>
+                      <div className="text-xl font-black text-amber-400 mt-1">{formatCompact(metrics.totalDamage)}</div>
+                    </div>
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
+                      <span className="text-[11px] text-slate-400">Razão Dano / Cura</span>
+                      <div className="text-xl font-black text-emerald-400 mt-1">{metrics.damageHealingRatio}x</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            )}
+
+            {activeTab === 'history' && (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-sm font-bold text-slate-100">📜 Histórico de Caçadas Salvas</h2>
+                  <div className="flex gap-2">
+                    <button onClick={handleExportCSV} disabled={huntsHistory.length === 0} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs">
+                      📥 Exportar CSV
+                    </button>
+                    <input type="text" placeholder="Pesquisar..." value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} className="bg-slate-955 border border-slate-800 text-xs text-slate-200 px-3 py-1 rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-80">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="sticky top-0 bg-slate-950 text-slate-400 font-bold uppercase">
+                      <tr className="border-b border-slate-800">
+                        <th className="p-2.5">Hunt</th>
+                        <th className="p-2.5">Tier</th>
+                        <th className="p-2.5">Duração</th>
+                        <th className="p-2.5">Raw XP Gain</th>
+                        <th className="p-2.5">Balance</th>
+                        <th className="p-2.5 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850 text-slate-300">
+                      {filteredHistory.length > 0 ? filteredHistory.map((h) => {
+                        const qInfo = getQuadrantInfo(h.rawXpH, h.balanceH);
+                        return (
+                          <tr key={h.id} className="hover:bg-slate-850/50">
+                            <td className="p-2.5 font-bold text-cyan-300">{h.name}</td>
+                            <td className="p-2.5"><span className="px-2 py-0.5 rounded font-black text-[10px]" style={{ backgroundColor: qInfo.hexColor, color: '#020617' }}>{qInfo.tierLabel}</span></td>
+                            <td className="p-2.5 text-slate-400">{h.durationStr}</td>
+                            <td className="p-2.5 font-bold text-blue-400">{formatNumber(h.rawXpGain)}</td>
+                            <td className={`p-2.5 font-bold ${h.balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(h.balance)}</td>
+                            <td className="p-2.5 text-right"><button onClick={() => handleDeleteHunt(h.id)} className="text-red-400 hover:underline">Excluir</button></td>
+                          </tr>
+                        );
+                      }) : (
+                        <tr><td colSpan={6} className="p-6 text-center text-slate-500">Nenhuma caçada registrada.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
