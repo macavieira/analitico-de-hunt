@@ -15,14 +15,28 @@
   <script type="text/babel">
     const { useState, useMemo, useEffect } = React;
 
-    // Regras de Quadrante e Tiers
-    function getQuadrantInfo(rawXpH, balanceH) {
-      if (rawXpH >= 6_000_000 && balanceH >= 800_000) {
+    // Configuração Padrão Inicial dos Tiers
+    const DEFAULT_TIER_CONFIG = {
+      tierS: { rawXpH: 6000000, balanceH: 800000 },
+      tierAPower: { rawXpH: 7000000, balanceH: 0 },
+      tierAProfit: { rawXpH: 4500000, balanceH: 800000 }
+    };
+
+    // Função de Classificação Dinâmica baseada nos parâmetros configurados
+    function getQuadrantInfo(rawXpH, balanceH, config) {
+      const cfgS = config?.tierS || DEFAULT_TIER_CONFIG.tierS;
+      const cfgAPower = config?.tierAPower || DEFAULT_TIER_CONFIG.tierAPower;
+      const cfgAProfit = config?.tierAProfit || DEFAULT_TIER_CONFIG.tierAProfit;
+
+      // Validação TIER S
+      const satisfiesS_XP = cfgS.rawXpH <= 0 || rawXpH >= cfgS.rawXpH;
+      const satisfiesS_Bal = cfgS.balanceH <= 0 || balanceH >= cfgS.balanceH;
+      if ((cfgS.rawXpH > 0 || cfgS.balanceH > 0) && satisfiesS_XP && satisfiesS_Bal) {
         return {
           key: 'TIER_S',
           title: 'TIER S - Caçada Perfeita',
           tierLabel: 'TIER S',
-          criteria: 'Raw XP ≥ 6M/h & Profit ≥ 800k/h',
+          criteria: `Raw XP ≥ ${formatCompact(cfgS.rawXpH)}/h & Profit ≥ ${formatCompact(cfgS.balanceH)}/h`,
           bgColor: 'bg-yellow-950/60',
           borderColor: 'border-yellow-500',
           textColor: 'text-yellow-400',
@@ -33,12 +47,15 @@
         };
       }
 
-      if (rawXpH >= 7_000_000) {
+      // Validação TIER A POWER
+      const satisfiesAPower_XP = cfgAPower.rawXpH <= 0 || rawXpH >= cfgAPower.rawXpH;
+      const satisfiesAPower_Bal = cfgAPower.balanceH <= 0 || balanceH >= cfgAPower.balanceH;
+      if ((cfgAPower.rawXpH > 0 || cfgAPower.balanceH > 0) && satisfiesAPower_XP && satisfiesAPower_Bal) {
         return {
           key: 'TIER_A_POWER',
           title: 'TIER A - Powerlevel',
           tierLabel: 'TIER A (Power)',
-          criteria: 'Raw XP ≥ 7M/h',
+          criteria: `Raw XP ≥ ${formatCompact(cfgAPower.rawXpH)}/h`,
           bgColor: 'bg-emerald-950/60',
           borderColor: 'border-emerald-500',
           textColor: 'text-emerald-400',
@@ -49,12 +66,15 @@
         };
       }
 
-      if (rawXpH >= 4_500_000 && balanceH >= 800_000) {
+      // Validação TIER A PROFIT
+      const satisfiesAProfit_XP = cfgAProfit.rawXpH <= 0 || rawXpH >= cfgAProfit.rawXpH;
+      const satisfiesAProfit_Bal = cfgAProfit.balanceH <= 0 || balanceH >= cfgAProfit.balanceH;
+      if ((cfgAProfit.rawXpH > 0 || cfgAProfit.balanceH > 0) && satisfiesAProfit_XP && satisfiesAProfit_Bal) {
         return {
           key: 'TIER_A_PROFIT',
           title: 'TIER A - Profit',
           tierLabel: 'TIER A (Profit)',
-          criteria: 'Raw XP ≥ 4.5M/h & Profit ≥ 800k/h',
+          criteria: `Raw XP ≥ ${formatCompact(cfgAProfit.rawXpH)}/h & Profit ≥ ${formatCompact(cfgAProfit.balanceH)}/h`,
           bgColor: 'bg-orange-950/60',
           borderColor: 'border-orange-500',
           textColor: 'text-orange-400',
@@ -65,11 +85,12 @@
         };
       }
 
+      // TIER C (Default / Baixo Desempenho)
       return {
         key: 'TIER_C',
         title: 'TIER C - Baixo Desempenho',
         tierLabel: 'TIER C',
-        criteria: 'Abaixo dos limiares de Tier S e Tier A',
+        criteria: 'Abaixo dos parâmetros definidos',
         bgColor: 'bg-red-950/60',
         borderColor: 'border-red-500',
         textColor: 'text-red-400',
@@ -210,8 +231,9 @@
 
     const formatNumber = (num) => new Intl.NumberFormat('pt-BR').format(num || 0);
     const formatCompact = (num) => {
+      if (!num || num <= 0) return '0';
       if (Math.abs(num) >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
-      if (Math.abs(num) >= 1_000) return (num / 1_000).toFixed(1) + 'k';
+      if (Math.abs(num) >= 1_000) return (num / 1_000).toFixed(0) + 'k';
       return num.toString();
     };
 
@@ -224,7 +246,7 @@
             Faça upload do seu arquivo <b>.txt</b> contendo seus logs do Hunt Analyzer.
           </p>
           <div>
-            <button onClick={onGoToImport} className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 font-bold rounded-xl text-xs transition shadow-lg">
+            <button onClick={onGoToImport} className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold rounded-xl text-xs transition shadow-lg">
               📁 Ir para Importar Arquivo .txt
             </button>
           </div>
@@ -235,9 +257,17 @@
     function App() {
       const [huntsHistory, setHuntsHistory] = useState(() => {
         try {
-          const saved = localStorage.getItem('tibia_hunts_github');
+          const saved = localStorage.getItem('tibia_hunts_custom');
           return saved ? JSON.parse(saved) : [];
         } catch(e) { return []; }
+      });
+
+      // Estado de Configuração do Utilizador para os Tiers
+      const [tierConfig, setTierConfig] = useState(() => {
+        try {
+          const savedCfg = localStorage.getItem('tibia_tier_config');
+          return savedCfg ? JSON.parse(savedCfg) : DEFAULT_TIER_CONFIG;
+        } catch(e) { return DEFAULT_TIER_CONFIG; }
       });
 
       const [activeTab, setActiveTab] = useState('analyzer');
@@ -253,9 +283,31 @@
 
       useEffect(() => {
         try {
-          localStorage.setItem('tibia_hunts_github', JSON.stringify(huntsHistory));
+          localStorage.setItem('tibia_hunts_custom', JSON.stringify(huntsHistory));
         } catch(e) {}
       }, [huntsHistory]);
+
+      useEffect(() => {
+        try {
+          localStorage.setItem('tibia_tier_config', JSON.stringify(tierConfig));
+        } catch(e) {}
+      }, [tierConfig]);
+
+      const handleTierInputChange = (tierKey, field, value) => {
+        const numVal = parseInt(value, 10) || 0;
+        setTierConfig(prev => ({
+          ...prev,
+          [tierKey]: {
+            ...prev[tierKey],
+            [field]: numVal
+          }
+        }));
+      };
+
+      const handleResetTierConfig = () => {
+        setTierConfig(DEFAULT_TIER_CONFIG);
+        showToast('🔄 Parâmetros restaurados para os valores padrão.');
+      };
 
       const handleFileUpload = (file) => {
         if (!file) return;
@@ -310,7 +362,7 @@
           const xpScore = h.rawXpH / maxRawXpH;
           const balanceScore = maxBalanceH > 0 ? Math.max(0, h.balanceH) / maxBalanceH : 0;
           const compositeScore = Math.round(((xpScore * 0.5) + (balanceScore * 0.5)) * 100);
-          const quadInfo = getQuadrantInfo(h.rawXpH, h.balanceH);
+          const quadInfo = getQuadrantInfo(h.rawXpH, h.balanceH, tierConfig);
           return { ...h, compositeScore, quadInfo };
         }).sort((a, b) => b.compositeScore - a.compositeScore);
 
@@ -325,7 +377,7 @@
           totalDamage,
           rankedEfficiencyHunts
         };
-      }, [huntsHistory]);
+      }, [huntsHistory, tierConfig]);
 
       const filteredHistory = useMemo(() => {
         return huntsHistory.filter((h) => {
@@ -348,7 +400,7 @@
                 ⚔️ Tibia Hunt Data Analytics Studio
               </h1>
               {huntsHistory.length > 0 && (
-                <button onClick={handleClearAllHistory} className="bg-red-950 text-red-300 border border-red-800 text-xs px-2.5 py-1 rounded-lg font-bold">
+                <button onClick={handleClearAllHistory} className="bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 text-xs px-2.5 py-1 rounded-lg font-bold">
                   🧹 Limpar Histórico ({huntsHistory.length})
                 </button>
               )}
@@ -356,12 +408,119 @@
           </header>
 
           <div className="max-w-7xl mx-auto px-4 mt-4">
+            {/* PAINEL DE CONFIGURAÇÃO DE PARAMETRIZAÇÃO */}
+            <div className="bg-slate-900/90 border border-cyan-500/30 rounded-2xl p-4 mb-4 shadow-xl space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                <div>
+                  <h3 className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                    ⚙️ Parametrização Personalizada dos Tiers
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Defina os requisitos mínimos para cada nível. Digite <b>0</b> nos campos que desejar ignorar.
+                  </p>
+                </div>
+                <button onClick={handleResetTierConfig} className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-2.5 py-1 rounded-lg border border-slate-700 self-start sm:self-auto">
+                  🔄 Restaurar Padrão
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* TIER S */}
+                <div className="bg-slate-950 border border-yellow-500/50 p-3 rounded-xl space-y-2">
+                  <div className="font-bold text-yellow-400 text-xs flex justify-between items-center">
+                    <span>🥇 TIER S</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Caçada Perfeita</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">RAW XP/h ≥</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierS.rawXpH}
+                        onChange={(e) => handleTierInputChange('tierS', 'rawXpH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-yellow-300 font-mono font-bold text-xs focus:outline-none focus:border-yellow-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">Profit/h ≥</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierS.balanceH}
+                        onChange={(e) => handleTierInputChange('tierS', 'balanceH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-yellow-300 font-mono font-bold text-xs focus:outline-none focus:border-yellow-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* TIER A POWER */}
+                <div className="bg-slate-950 border border-emerald-500/50 p-3 rounded-xl space-y-2">
+                  <div className="font-bold text-emerald-400 text-xs flex justify-between items-center">
+                    <span>⚡ TIER A (Power)</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Foco em XP</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">RAW XP/h ≥</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierAPower.rawXpH}
+                        onChange={(e) => handleTierInputChange('tierAPower', 'rawXpH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-emerald-300 font-mono font-bold text-xs focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">Profit/h ≥ (0 = ignora)</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierAPower.balanceH}
+                        onChange={(e) => handleTierInputChange('tierAPower', 'balanceH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-emerald-300 font-mono font-bold text-xs focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* TIER A PROFIT */}
+                <div className="bg-slate-950 border border-orange-500/50 p-3 rounded-xl space-y-2">
+                  <div className="font-bold text-orange-400 text-xs flex justify-between items-center">
+                    <span>💰 TIER A (Profit)</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Foco em Lucro</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">RAW XP/h ≥</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierAProfit.rawXpH}
+                        onChange={(e) => handleTierInputChange('tierAProfit', 'rawXpH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-orange-300 font-mono font-bold text-xs focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block text-[10px] mb-0.5">Profit/h ≥</label>
+                      <input
+                        type="number"
+                        value={tierConfig.tierAProfit.balanceH}
+                        onChange={(e) => handleTierInputChange('tierAProfit', 'balanceH', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-orange-300 font-mono font-bold text-xs focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ABAS */}
             <div className="flex gap-2 border-b border-slate-800 pb-1 overflow-x-auto text-xs font-semibold">
               <button onClick={() => setActiveTab('analyzer')} className={`px-3 py-2 rounded-t-xl ${activeTab === 'analyzer' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-slate-900' : 'text-slate-400'}`}>
                 📁 Importar (.txt)
               </button>
               <button onClick={() => setActiveTab('dashboard')} className={`px-3 py-2 rounded-t-xl ${activeTab === 'dashboard' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-slate-900' : 'text-slate-400'}`}>
                 📊 Visão Gerencial
+              </button>
+              <button onClick={() => setActiveTab('matrix')} className={`px-3 py-2 rounded-t-xl ${activeTab === 'matrix' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-slate-900' : 'text-slate-400'}`}>
+                🎯 Matriz de Tiers
               </button>
               <button onClick={() => setActiveTab('history')} className={`px-3 py-2 rounded-t-xl ${activeTab === 'history' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-slate-900' : 'text-slate-400'}`}>
                 📜 Histórico ({huntsHistory.length})
@@ -371,15 +530,15 @@
 
           <main className="max-w-7xl mx-auto px-4 mt-4">
             {activeTab === 'analyzer' && (
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
                 <h2 className="text-sm font-bold text-slate-100">📁 Importar Logs do Hunt Analyzer</h2>
-                <input type="file" accept=".txt" onChange={(e) => handleFileUpload(e.target.files[0])} className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-cyan-500 file:text-slate-950 hover:file:bg-cyan-400" />
+                <input type="file" accept=".txt" onChange={(e) => handleFileUpload(e.target.files[0])} className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-cyan-500 file:text-slate-950 hover:file:bg-cyan-400 cursor-pointer" />
                 
                 {parsedImportBatch.length > 0 && (
                   <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                    <span className="text-xs text-slate-400">Detectadas: <b className="text-cyan-300">{parsedImportBatch.length}</b> caçadas</span>
-                    <button onClick={handleSaveImportedBatch} className="py-2 px-4 bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs">
-                      💾 Confirmar e Salvar
+                    <span className="text-xs text-slate-400">Sessões detectadas: <b className="text-cyan-300 font-mono">{parsedImportBatch.length}</b></span>
+                    <button onClick={handleSaveImportedBatch} className="py-2 px-4 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition">
+                      💾 Salvar {parsedImportBatch.length} Caçada(s)
                     </button>
                   </div>
                 )}
@@ -390,41 +549,50 @@
               !metrics ? <EmptyState onGoToImport={() => setActiveTab('analyzer')} /> : (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-md">
                       <span className="text-slate-400 block font-bold">Raw XP Total</span>
                       <div className="text-xl font-black text-cyan-400 mt-1">{formatNumber(metrics.totalRawXP)}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Média: <b>{formatNumber(metrics.avgRawXpH)}/h</b></div>
                     </div>
-                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-md">
                       <span className="text-slate-400 block font-bold">Balance Total</span>
                       <div className={`text-xl font-black mt-1 ${metrics.totalBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(metrics.totalBalance)} gps</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Média: <b>{formatNumber(metrics.avgBalanceH)}/h</b></div>
                     </div>
-                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-md">
                       <span className="text-slate-400 block font-bold">Horas Totais</span>
                       <div className="text-xl font-black text-amber-400 mt-1">{metrics.totalHours}h</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Caçadas: <b>{metrics.totalHunts}</b></div>
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs">
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs shadow-xl">
                     <h3 className="font-bold text-slate-100 mb-3">🏆 Ranking de Eficiência</h3>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-950 text-slate-400 uppercase">
-                          <tr>
-                            <th className="p-2">Pos</th>
-                            <th className="p-2">Hunt</th>
-                            <th className="p-2">Tier</th>
-                            <th className="p-2">Raw XP/h</th>
-                            <th className="p-2">Balance/h</th>
+                    <div className="overflow-x-auto rounded-xl border border-slate-800">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-950 text-slate-400 uppercase font-bold text-[11px]">
+                          <tr className="border-b border-slate-800">
+                            <th className="p-2.5">Pos</th>
+                            <th className="p-2.5">Hunt</th>
+                            <th className="p-2.5">Tier Resultante</th>
+                            <th className="p-2.5">RAW XP/h Real</th>
+                            <th className="p-2.5">Balance/h Real</th>
+                            <th className="p-2.5 text-right">Score</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-850">
+                        <tbody className="divide-y divide-slate-850 text-slate-300">
                           {metrics.rankedEfficiencyHunts.map((h, i) => (
-                            <tr key={h.id}>
-                              <td className="p-2 font-bold font-mono">#{i+1}</td>
-                              <td className="p-2 font-bold text-cyan-300">{h.name}</td>
-                              <td className="p-2"><span className={`px-2 py-0.5 rounded font-bold text-[10px] ${h.quadInfo.badgeColor}`}>{h.quadInfo.tierLabel}</span></td>
-                              <td className="p-2 text-blue-400 font-bold">{formatNumber(h.rawXpH)}</td>
-                              <td className={`p-2 font-bold ${h.balanceH >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(h.balanceH)}</td>
+                            <tr key={h.id} className="hover:bg-slate-850/50">
+                              <td className="p-2.5 font-bold font-mono">#{i+1}</td>
+                              <td className="p-2.5 font-bold text-cyan-300">{h.name}</td>
+                              <td className="p-2.5">
+                                <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${h.quadInfo.badgeColor}`}>
+                                  {h.quadInfo.icon} {h.quadInfo.tierLabel}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-blue-400 font-bold">{formatNumber(h.rawXpH)}</td>
+                              <td className={`p-2.5 font-bold ${h.balanceH >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(h.balanceH)}/h</td>
+                              <td className="p-2.5 text-right font-bold"><span className="bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded-full">{h.compositeScore}</span></td>
                             </tr>
                           ))}
                         </tbody>
@@ -435,32 +603,70 @@
               )
             )}
 
+            {activeTab === 'matrix' && (
+              !metrics ? <EmptyState onGoToImport={() => setActiveTab('analyzer')} /> : (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs shadow-xl space-y-3">
+                  <h3 className="font-bold text-slate-100 text-sm">🎯 Matriz de Qualificação das Hunts</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
+                    {metrics.rankedEfficiencyHunts.map((h) => (
+                      <div key={h.id} className={`p-3 rounded-xl border ${h.quadInfo.bgColor} ${h.quadInfo.borderColor} flex justify-between items-center`}>
+                        <div>
+                          <div className="font-bold text-slate-100 text-xs flex items-center gap-1">
+                            <span>{h.quadInfo.icon}</span>
+                            <span>{h.name}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-1">
+                            RAW XP/h: <b className="text-blue-300">{formatNumber(h.rawXpH)}</b> • Profit/h: <b className="text-emerald-300">{formatNumber(h.balanceH)} gps</b>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">Regra: {h.quadInfo.criteria}</div>
+                        </div>
+                        <div>
+                          <span className={`px-2.5 py-1 rounded-md font-black text-[10px] ${h.quadInfo.badgeColor}`}>
+                            {h.quadInfo.tierLabel}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+
             {activeTab === 'history' && (
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs space-y-3">
-                <input type="text" placeholder="Pesquisar..." value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} className="bg-slate-950 border border-slate-800 text-xs text-slate-200 px-3 py-1.5 rounded-xl w-full sm:w-64" />
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-950 text-slate-400 uppercase">
-                      <tr>
-                        <th className="p-2">Hunt</th>
-                        <th className="p-2">Data</th>
-                        <th className="p-2">Duração</th>
-                        <th className="p-2">Raw XP Gain</th>
-                        <th className="p-2">Balance</th>
-                        <th className="p-2 text-right">Ação</th>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs space-y-3 shadow-xl">
+                <input type="text" placeholder="Pesquisar por nome ou data..." value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} className="bg-slate-955 border border-slate-800 text-xs text-slate-200 px-3 py-1.5 rounded-xl w-full sm:w-64 focus:outline-none focus:border-cyan-500" />
+                <div className="overflow-x-auto rounded-xl border border-slate-800">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-950 text-slate-400 uppercase font-bold text-[11px]">
+                      <tr className="border-b border-slate-800">
+                        <th className="p-2.5">Hunt</th>
+                        <th className="p-2.5">Tier Reavaliado</th>
+                        <th className="p-2.5">Data</th>
+                        <th className="p-2.5">Duração</th>
+                        <th className="p-2.5">Raw XP Gain</th>
+                        <th className="p-2.5">Balance</th>
+                        <th className="p-2.5 text-right">Ação</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-850">
-                      {filteredHistory.map((h) => (
-                        <tr key={h.id}>
-                          <td className="p-2 font-bold text-cyan-300">{h.name}</td>
-                          <td className="p-2 text-slate-400">{h.date}</td>
-                          <td className="p-2 text-slate-400">{h.durationStr}</td>
-                          <td className="p-2 font-bold text-blue-400">{formatNumber(h.rawXpGain)}</td>
-                          <td className={`p-2 font-bold ${h.balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(h.balance)}</td>
-                          <td className="p-2 text-right"><button onClick={() => handleDeleteHunt(h.id)} className="text-red-400 hover:underline">Excluir</button></td>
-                        </tr>
-                      ))}
+                    <tbody className="divide-y divide-slate-850 text-slate-300">
+                      {filteredHistory.map((h) => {
+                        const qInfo = getQuadrantInfo(h.rawXpH, h.balanceH, tierConfig);
+                        return (
+                          <tr key={h.id} className="hover:bg-slate-850/50">
+                            <td className="p-2.5 font-bold text-cyan-300">{h.name}</td>
+                            <td className="p-2.5">
+                              <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${qInfo.badgeColor}`}>
+                                {qInfo.tierLabel}
+                              </span>
+                            </td>
+                            <td className="p-2.5 text-slate-400">{h.date}</td>
+                            <td className="p-2.5 text-slate-400">{h.durationStr}</td>
+                            <td className="p-2.5 font-bold text-blue-400">{formatNumber(h.rawXpGain)}</td>
+                            <td className={`p-2.5 font-bold ${h.balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatNumber(h.balance)}</td>
+                            <td className="p-2.5 text-right"><button onClick={() => handleDeleteHunt(h.id)} className="text-red-400 hover:underline">Excluir</button></td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
